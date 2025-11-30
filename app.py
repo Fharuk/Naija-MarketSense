@@ -1,11 +1,13 @@
 import streamlit as st
 import os
-from agro_agent_core import AgroAgent
 import pandas as pd
 import plotly.express as px
 
-# Config
-st.set_page_config(page_title="Naija MarketSense", layout="mobile")
+# --- PAGE CONFIG MUST BE FIRST ---
+st.set_page_config(page_title="Naija MarketSense", layout="wide")
+
+# Internal Modules (Import after page config to be safe)
+from agro_agent_core import AgroAgent
 
 # Secure Init
 def get_api_key():
@@ -27,7 +29,12 @@ if not api_key:
     st.error("System Offline. Configure GEMINI_API_KEY.")
     st.stop()
 
-agent = AgroAgent(api_key)
+# Initialize Agent
+try:
+    agent = AgroAgent(api_key)
+except Exception as e:
+    st.error(f"Failed to initialize AI: {e}")
+    st.stop()
 
 # Input Section
 st.subheader("Wetin you want check today?")
