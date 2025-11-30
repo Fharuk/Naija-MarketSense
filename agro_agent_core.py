@@ -2,6 +2,7 @@ import google.generativeai as genai
 import json
 import logging
 import os
+import tempfile
 from market_data import MarketOracle
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,6 @@ class AgroAgent:
         """
         
         # Step 1: Intent Extraction
-        # We ask Gemini to extract the commodity and market from the natural language/audio
         prompt = """
         You are a Nigerian Market Assistant. Extract the 'Commodity' and 'Market' from the user's input.
         Input might be in Pidgin English.
@@ -35,14 +35,26 @@ class AgroAgent:
         Output JSON: {"commodity": "string", "market": "string", "original_intent": "string"}
         """
         
-        # If audio, we would send audio to Gemini here (Multimodal). 
-        # For this version, we will assume Streamlit handles STT or we use text for stability first.
-        # Let's support Text Input primarily for the MVP to ensure stability, 
-        # but structure it for Audio later.
-        
         try:
-            response = self.model.generate_content([prompt, user_text_input])
-            intent = json.loads(response.text.strip('```json').strip('```'))
+            if audio_file:
+                # 1. Save audio bytes to a temporary file
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                    tmp.write(audio_file.getvalue())
+                    tmp_path = tmp.name
+
+                # 2. Upload to Gemini File API
+                uploaded_file = genai.upload_file(tmp_path, mime_type="audio/wav")
+                
+                # 3. Multimodal Generation
+                response = self.model.generate_content([prompt, uploaded_file])
+                
+                # Clean up temp file
+                os.remove(tmp_path)
+            else:
+                # Text-only Generation
+                response = self.model.generate_content([prompt, user_text_input])
+
+            intent = json.loads(response.text.strip('`json').strip('`'))
         except Exception as e:
             return {"error": f"Could not understand request: {e}"}
 
@@ -58,14 +70,12 @@ class AgroAgent:
             return {"error": f"Sorry, I no get price for {commodity} inside {market}."}
 
         # Step 3: Logistics (Mocked for now)
-        transport_cost = 5000 # Default local run
-        net_profit_margin = "Calculating..." # Placeholder for complex logic
+        transport_cost = 5000 
 
         # Step 4: Insight Generation (The "Oracle")
-        # We ask Gemini to generate a response in Pidgin English
         analysis_prompt = f"""
         Act as a wise Nigerian Market Trader. 
-        User asked: "{intent['original_intent']}"
+        User asked: "{intent.get('original_intent', 'Price Check')}"
         
         Data:
         - Price: N{price_data['price']:,} per {price_data['unit']}
