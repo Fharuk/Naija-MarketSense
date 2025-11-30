@@ -3,12 +3,13 @@ import json
 import logging
 import os
 import tempfile
+from gtts import gTTS
 from market_data import MarketOracle
 
 logger = logging.getLogger(__name__)
 
 class AgroAgent:
-    def __init__(self, api_key):
+    def __init__(self, api_key: str):
         if not api_key:
             raise ValueError("API Key required")
         
@@ -16,83 +17,89 @@ class AgroAgent:
         self.model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
         self.oracle = MarketOracle()
 
+    def _generate_audio_response(self, text: str) -> str:
+        """Converts text to audio using gTTS and returns file path."""
+        try:
+            # Generate speech (English/Pidgin approximation)
+            tts = gTTS(text=text, lang='en', tld='com.ng') # Attempting Nigerian accent bias
+            
+            # Save to temp file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                tts.save(tmp.name)
+                return tmp.name
+        except Exception as e:
+            logger.error(f"TTS Error: {e}")
+            return None
+
     def process_query(self, user_text_input=None, audio_file=None):
         """
-        Main pipeline: 
-        1. Understand Query (Text or Audio)
-        2. Fetch Data (Tools)
-        3. Generate Insight (Reasoning)
+        Executes the full pipeline: Audio/Text -> Intent -> Arbitrage Data -> Insight -> TTS.
         """
         
-        # Step 1: Intent Extraction
+        # 1. Intent Extraction
         prompt = """
-        You are a Nigerian Market Assistant. Extract the 'Commodity' and 'Market' from the user's input.
+        You are a Nigerian Market Assistant. Extract the 'Commodity' from the user's input.
         Input might be in Pidgin English.
-        
-        Known Markets: Mile 12, Bodija, Wuse, Ogbete, Alaba Rago.
         Known Commodities: Tomato, Rice, Yam, Garri, Palm Oil.
         
-        Output JSON: {"commodity": "string", "market": "string", "original_intent": "string"}
+        Output JSON: {"commodity": "string", "original_intent": "string"}
         """
         
         try:
             if audio_file:
-                # 1. Save audio bytes to a temporary file
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
                     tmp.write(audio_file.getvalue())
                     tmp_path = tmp.name
-
-                # 2. Upload to Gemini File API
+                
                 uploaded_file = genai.upload_file(tmp_path, mime_type="audio/wav")
-                
-                # 3. Multimodal Generation
                 response = self.model.generate_content([prompt, uploaded_file])
-                
-                # Clean up temp file
                 os.remove(tmp_path)
             else:
-                # Text-only Generation
                 response = self.model.generate_content([prompt, user_text_input])
 
             intent = json.loads(response.text.strip('`json').strip('`'))
         except Exception as e:
-            return {"error": f"Could not understand request: {e}"}
+            return {"error": f"I no understand wetin you talk. Try again. Error: {e}"}
 
-        # Step 2: Data Retrieval (Tool Use)
-        market = intent.get("market")
         commodity = intent.get("commodity")
+        if not commodity:
+            return {"error": "Abeg, which market item you dey find? I know Tomato, Rice, Yam..."}
+
+        # 2. Arbitrage Scan (The "Excellent" Feature)
+        arbitrage_data = self.oracle.get_arbitrage_scan(commodity)
+        if not arbitrage_data:
+            return {"error": f"Data no dey for {commodity}."}
+
+        # 3. Insight Generation (The "Wise Trader")
+        cheapest = arbitrage_data['cheapest']
+        expensive = arbitrage_data['most_expensive']
+        spread = arbitrage_data['spread']
         
-        if not market or not commodity:
-            return {"error": "I no hear the market or commodity name well. Abeg talk am again."}
-
-        price_data = self.oracle.get_market_price(market, commodity)
-        if not price_data:
-            return {"error": f"Sorry, I no get price for {commodity} inside {market}."}
-
-        # Step 3: Logistics (Mocked for now)
-        transport_cost = 5000 
-
-        # Step 4: Insight Generation (The "Oracle")
         analysis_prompt = f"""
-        Act as a wise Nigerian Market Trader. 
-        User asked: "{intent.get('original_intent', 'Price Check')}"
+        Act as a smart Nigerian Market Trader giving business advice.
+        User asked about: {commodity}
         
-        Data:
-        - Price: N{price_data['price']:,} per {price_data['unit']}
-        - Market: {market}
-        - Transport Avg: N{transport_cost:,}
+        Market Data:
+        - Cheapest: {cheapest['market']} at N{cheapest['price']:,}
+        - Most Expensive: {expensive['market']} at N{expensive['price']:,}
+        - Profit Spread: N{spread:,}
         
         Task:
-        1. Give the price clearly.
-        2. Give advice in Nigerian Pidgin English. 
-        (e.g., "Omo, price don go up o! Make you buy now before e climb again.")
+        1. Summarize the best place to buy.
+        2. Give advice in Nigerian Pidgin English. Focus on the PROFIT opportunity.
+        (e.g., "Oga! If you buy for {cheapest['market']} carry go {expensive['market']}, you go make serious gain!")
+        Keep it short (under 30 words) for audio.
         """
         
         analysis_response = self.model.generate_content(analysis_prompt)
-        
+        advice_text = analysis_response.text
+
+        # 4. Generate Audio Response (The "Loveable" Feature)
+        audio_path = self._generate_audio_response(advice_text)
+
         return {
             "intent": intent,
-            "data": price_data,
-            "transport": transport_cost,
-            "advice": analysis_response.text
+            "data": arbitrage_data,
+            "advice": advice_text,
+            "audio_path": audio_path
         }

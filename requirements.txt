@@ -3,4 +3,5 @@ google-generativeai
 pandas
 numpy
 plotly
+gTTS
 python-dotenv
